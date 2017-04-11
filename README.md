@@ -11,7 +11,7 @@ Here the exposed interface:
 - **connect(wnd[, origin="\*"]):promise-like**: starts the connection to another window (_wnd_) providing its origin. Returns a promise-like object. The resolution callback will have the connection object as its first argument.
 - **disconnect(obj):void**: disconnects the library invalidating all produced object wrapper. _obj_ can be a connection object or a window object.
 
-#Usage
+# Usage
 
 Here are a usage example of an iframe coomunicating with its parent window.
 Every page loads the jquery library and the webmessageRMI library.
@@ -71,7 +71,7 @@ After the connection has been established, both sides register some local object
 
 After that the main window get a wrapper object of the "c" object exsposed by the IFrame and calls its mt2_\_sync_ method variant.
 
-#API
+# API
 
 ### connection object
 
@@ -123,7 +123,7 @@ Here the exposed interface:
 - **resolve(result):void**: signal the successfull conclusion of the invocation, sending _result_ as the outcome.
 - **reject(error):void**: signal the unsuccessfull conclusion of the invocation, sending _error_ as the outcome.
 
-#Exposing an object
+# Exposing an object
 
 Every object can be exposed. The unique limitations are those imposed by the HTML5 webmessages specification: every exchanged object must be _Transferrable_.
 
