@@ -10,6 +10,8 @@ Here the exposed interface:
 - **eventHook():DOMElement**: gets an object (DOMElement) usable to subcribe to library produced events
 - **connect(wnd[, origin="\*"]):promise-like**: starts the connection to another window (_wnd_) providing its origin. Returns a promise-like object. The resolution callback will have the connection object as its first argument.
 - **disconnect(obj):void**: disconnects the library invalidating all produced object wrapper. _obj_ can be a connection object or a window object.
+- **on(obj, eventName, callback)**: adds the event handler _callback_ of _eventName_ from the object _obj_. The object must be a DOMElement or an object with an _eventHook()_ methods which returns a DOMElement.
+- **off(obj, eventName, callback)**: removes the event handler _callback_ of _eventName_ from the object _obj_.
 
 # Usage
 
@@ -31,9 +33,29 @@ Main window:
 			console.log(data);
 		});
 
-		wmRMI.getWrappedObject("c").done(function(p){
-			p.mt1_sync(10).join(function(res){
-				//res.value===16
+		window.wmRMI.on(wmRMI,"object-bound", function(name){
+			//args:c
+			console.log("event [object-bound]: args:"+name);
+			
+			wmRMI.getWrappedObject("c")
+			.done(function(p){
+				p.mt1_sync(10).join(function(res){
+					//res.value===16
+					console.log(res.value);
+				});
+				
+				$(p.eventHook()).on("test", function(e){
+					//event [c::test]: args:3,"valore"
+					console.log("event [c::test]: args:"+e.detail.arguments);
+				});
+				//same as
+				window.wmRMI.on(p,"test", function(a,b){
+					//event [c::test]: args:3,"valore"
+					console.log("event [c::test]: args:"+a+","+b);
+				});
+			})
+			.fail(function(e){
+				console.log(e);
 			});
 		});
 	});
@@ -63,6 +85,10 @@ IFrame window:
 		.done(function(data){
 			console.log(data);
 		});
+
+		setTimeout(function(){
+			wmRMI.rmiTriggerEvent("c","test", 3, "valore");
+		},2000);
 	});
 </pre>
 
@@ -81,8 +107,8 @@ Here the exposed interface:
 
 - **eventHook():DOMElement**: gets an object (DOMElement) usable to subcribe to remote events
 - **triggerEvent(eventName[,...]):void**: trigger a remote event of type _eventName_. Every further argument will be passed in the event detail.
-- **bind(objName, obj):void**: expose a local object to remote invaocation by _objName_ name. The connection object is always exposed with the **"root"** name.
-- **unbind(objName):void**: revokes the local by _objName_ identified object exposition. 
+- **bind(objName, obj):void**: expose a local object to remote invaocation by _objName_ name. The connection object is always exposed with the **"root"** name. The event **object-bound** with the object binding name is triggered.
+- **unbind(objName):void**: revokes the local by _objName_ identified object exposition. The event **object-unbound** with the object binding name is triggered.
 - **rmiCall(objName,mtName[,...]):promise-like**: invokes the method named _mtName_ on the remote _objName_ named object. Every further argument will be passed as an argument of the remote method. Return a promise-like object. The resolution callback will have the method result as its first argument. 
 - **listBoundObjects():array**: gets an array of remotely exposed object names.
 - **listBoundObjectMethods(objName):array**: gets an array of method names exposed by _objName_.
@@ -101,6 +127,8 @@ The _\*\_sync_ methods will return an object with the following interface:
 - **hasValue():bool**: returns true if the object has a _value_ property.
 - **value:object**: the result of the invocation. The value is meaningfull and set only when the _hasValue()_ method returns true.
 - **join(callback):void**: register a callback to be called at the setting of the _value_ attribute at the conclusion of the remote method invocation. The object will be passed as the first argument of the callback.
+
+The object has also a **eventHook()** method which exposes the hook on which remote events from the paired window will be triggered and can be listened to.
 
 ### promise-like object
 
@@ -129,7 +157,7 @@ Every object can be exposed. The unique limitations are those imposed by the HTM
 
 It's possibe to influence the behaviour of the exposed methods and their visbility, decorating the function object with the attribute **\_\_wmRMI_attributes**.
 
-Setting the attribute **nonpublic=true** of the **\_\_wmRMI_attributes** object hides the method from the remote peer insepction and invocation.
+Setting the attribute **notpublic=true** of the **\_\_wmRMI_attributes** object hides the method from the remote peer insepction and invocation.
 Setting the attribute **async=true** of the **\_\_wmRMI_attributes** object blocks the automatic call of the _callContext.resolve()_ method, enabling the asynchronous managing of the call.
 
 The asynchronous managing can also be enforced by the method itself. Every remotely called method will have the attribute **\_wmRMI_ctx** set with the current callContext object. Setting the attribute **\_wmRMI_ctx.async=true**, blocks the automatic resolve call and allows the caller to handle result signlaing.

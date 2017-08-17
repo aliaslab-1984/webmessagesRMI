@@ -4,6 +4,17 @@
 		return functionToCheck && getType.toString.call(functionToCheck) === '[object Function]';
 	};
 	
+	function uniqueId(){
+		return Date.now().toString() + "-" + Math.floor(Math.random()*1000000000).toString();
+	};
+	
+	function sanitizeOrigin(origin){
+		if(!origin || /^https?:\/\/.+$|^\*$/.test(origin)==false)
+			return null;
+		else
+			return origin;
+	}
+	
 	(function () {
 
 	  if ( typeof window.CustomEvent === "function" ) return false;
@@ -105,7 +116,12 @@
 		
 		var _method = null;
 		
+		origin = sanitizeOrigin(origin);
+		origin = origin || "*";
+		
 		that.reject= function(msg){
+			if(msg instanceof DOMException)
+				msg = {code:msg.code,message:msg.message,name:msg.name, objString:msg.toString()};
 			source.postMessage({_wmRMIId:_wmRMIId, type:"response", callId:callId, success:false, error:msg}, origin);
 			if(_method)
 				delete _method.__wmRMI_ctx;
@@ -113,7 +129,8 @@
 				
 		that.resolve = function(result){
 			source.postMessage({_wmRMIId:_wmRMIId, type:"response", callId:callId, success:true, result:result}, origin);
-			delete _method.__wmRMI_ctx; 
+			if(_method)
+				delete _method.__wmRMI_ctx; 
 		};
 		
 		that.call = function(obj, mt, args){
@@ -155,6 +172,8 @@
 		
 		var _disposed = false;
 		var _connectedWindow = wnd;
+		
+		origin = sanitizeOrigin(origin);
 		var _connectedOrigin = origin || "*";
 		var connectedWindow = function(){
 			if(_disposed)
@@ -171,6 +190,7 @@
 			if(_disposed)
 				throw "object disposed";		
 			_boundObjs[objName] = obj;
+			that.triggerEvent("object-bound", objName);
 		};
 		that.bind.__wmRMI_attributes={notpublic:true}
 		
@@ -178,6 +198,7 @@
 			if(_disposed)
 				throw "object disposed";			
 			delete _boundObjs[objName];
+			that.triggerEvent("object-unbound", objName);
 		}
 		that.unbind.__wmRMI_attributes={notpublic:true}
 		
@@ -187,7 +208,7 @@
 			var d = new deferred();
 			
 			var args = Array.prototype.slice.call(arguments,2);
-			var callId = Date.now().toString();
+			var callId = uniqueId();
 			_pendingReqs[callId]=d;
 			
 			connectedWindow().postMessage({_wmRMIId:_wmRMIId, type:"request", callId:callId, objectName:objName, methodName:mtName, arguments:args}, connectedOrigin());
@@ -199,12 +220,25 @@
 		that.triggerEvent=function(eventName){
 			if(_disposed)
 				throw "object disposed";
+			if(!connectedWindow())
+				return;
 			var args = Array.prototype.slice.call(arguments,1);
 						
 			connectedWindow().postMessage({_wmRMIId:_wmRMIId, type:"event", eventName:eventName, detail:args}, connectedOrigin());
 		};
+		that.rmiTriggerEvent=function(objName, eventName){
+			if(_disposed)
+				throw "object disposed";
+			if(!connectedWindow())
+				return;
+			var args = Array.prototype.slice.call(arguments,2);
+			
+			args.unshift(eventName);
+			
+			connectedWindow().postMessage({_wmRMIId:_wmRMIId, type:"event", eventName:"::"+objName+"::", detail:args}, connectedOrigin());
+		};
 				
-		_notify = function(data){
+		var _notify = function(data){
 			if(_pendingReqs[data.callId]===undefined)
 				throw "response for unknown request. callId:'"+data.callId+"'";
 			
@@ -234,9 +268,16 @@
 			.done(function(ms){
 				var t = {};
 				
+				var _wrapperDisposed=false;
+				
 				for(var i=0;i<ms.length;i++){
+					if(ms[i] == "eventHook")
+						continue;
+					
 					t[ms[i]] = (function(m){
 						return function(){
+							if(_wrapperDisposed)
+								throw "The wrapper id disposed";
 							var args = Array.prototype.slice.call(arguments);
 							args.unshift(m);
 							args.unshift(objName);
@@ -246,6 +287,8 @@
 					
 					t[ms[i]+"_sync"] = (function(m){
 						return function(){
+							if(_wrapperDisposed)
+								throw "The wrapper id disposed";
 							var args = Array.prototype.slice.call(arguments);
 							args.unshift(m);
 							args.unshift(objName);
@@ -276,6 +319,21 @@
 				
 				t.isDisposed=function(){
 					return _disposed;
+				};
+				
+				var _eventHook = document.createElement("div");
+				t.eventHook = function()
+				{
+					return _eventHook;
+				};
+				var tmpFunc;
+				that.eventHook().addEventListener("::"+objName+"::", tmpFunc = function(evt){
+					_eventHook.dispatchEvent(new CustomEvent(evt.detail.arguments[0], { detail : { arguments: Array.prototype.slice.call(evt.detail.arguments,1), originalEvent:evt } }));
+				});
+				
+				t.dispose = function(){
+					_wrapperDisposed = true;
+					that.eventHook().removeEventListener("::"+objName+"::",tmpFunc,false);
 				};
 				
 				d.resolve(t);
@@ -327,7 +385,7 @@
 					var result = ctx.call(b_obj, b_method, evt.data.arguments);
 					if(ctx.error)
 						ctx.reject(ctx.error);
-					if(!ctx.async)
+					else if(!ctx.async)
 						ctx.resolve(result);
 				}
 				catch(e){
@@ -338,7 +396,7 @@
 				_notify(evt.data);
 			}
 			else if(evt.data.type=="event"){
-				_eventHook.dispatchEvent(new CustomEvent(evt.data.eventName.toLowerCase(), { detail : { arguments: evt.data.detail, originalEvent:evt }}));
+				_eventHook.dispatchEvent(new CustomEvent(evt.data.eventName, { detail : { arguments: evt.data.detail, originalEvent:evt }}));
 			}
 		}, false);
 			
@@ -372,11 +430,24 @@
 			return -1;
 		};
 		
+		that.on=function(el,eventName,handler){
+			if(el.eventHook && isFunction(el.eventHook))
+				el = el.eventHook();
+			el.addEventListener(eventName, handler.__listener = function(evt){
+				handler.apply(el, evt.detail.arguments);
+			});
+		}
+		that.off=function(el,eventName,handler){
+			if(el.eventHook && isFunction(el.eventHook))
+				el = el.eventHook();
+			el.removeEventListener(eventName, handler.__listener,false);
+		}
+		
 		that.connect=function(wnd, origin){			
 			var d = new deferred();
 			var idx = indexOfWnd(wnd);
 			if(idx==-1){
-				var id = Date.now().toString();
+				var id = uniqueId();
 				_protocols["connect"].pending[id] = d;
 				_protocols["connect"].steps.init(id, wnd, origin);
 			}
@@ -403,9 +474,11 @@
 				pending:{},
 				steps:{
 					init:function(id, wnd, origin){
+						origin = sanitizeOrigin(origin);
 						wnd.postMessage({type:"protocol",name:"connect",step:"init", args:{_wmRMIId:id}}, origin||"*");
 					},
-					complete:function(id, source, origin, obj){						
+					complete:function(id, source, origin, obj){		
+						origin = sanitizeOrigin(origin);				
 						source.postMessage({type:"protocol",name:"connect",step:"complete", args:{_wmRMIId:id}}, origin||"*");
 						
 						_eventHook.dispatchEvent(new CustomEvent("connected",{detail:{wmRMI:obj}}));
